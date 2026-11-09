@@ -1,0 +1,3 @@
+/models/mixamo/*
+  Access-Control-Allow-Origin: *
+  Cross-Origin-Resource-Policy: cross-origin
