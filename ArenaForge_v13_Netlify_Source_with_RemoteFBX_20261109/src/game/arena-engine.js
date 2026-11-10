@@ -42,13 +42,8 @@ export class ArenaEngine {
     this.scene.background = new THREE.Color('#a8bfc3');
     this.scene.fog = new THREE.Fog('#a8bfc3', 80, 190);
     this.camera = new THREE.PerspectiveCamera(76, 1, 0.1, 10000);
-    this.renderer = new THREE.WebGLRenderer({
-    antialias: false,
-    powerPreference: 'high-performance'
-    });
-
+    this.renderer = new THREE.WebGLRenderer({antialias: false, powerPreference: 'high-performance'});
     this.renderer.setPixelRatio(1);
-
     this.renderer.shadowMap.enabled = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
