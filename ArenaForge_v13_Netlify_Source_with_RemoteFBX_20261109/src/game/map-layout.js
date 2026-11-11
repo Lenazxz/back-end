@@ -193,6 +193,7 @@ export let ACCESS_RAMPS = Object.freeze([
 // Smooth, navigable approaches: A is a sunken vault, B is a raised courtyard.
 // The height difference is shared between the browser and Render.
 export function siteElevation(x,z) {
+  if(ACTIVE_MAP_ID==='arena')return 0;
   const easing=(distance,r0,r1)=>{
     const t=Math.max(0,Math.min(1,(r1-distance)/(r1-r0)));
     return t*t*(3-2*t);
@@ -228,10 +229,11 @@ export function mapPoint(x, z) {
 // selects this per room, synchronously, before processing each room action.
 const defaultMap={name:'FOUNDRY HEIGHTS',MAP_LIMITS,SITES,SPAWNS,MAP_AREAS,MAP_HOLES,MAP_LABELS,COVER,BALCONIES,ACCESS_RAMPS};
 export const MAP_IDS=Object.freeze(['foundry','exchange','triad']);
+export const ARENA_MAP_ID='arena';
 export let ACTIVE_MAP_ID='foundry';
 export let ACTIVE_MAP_NAME='FOUNDRY HEIGHTS';
 export function selectActiveMap(requested='foundry') {
-  const id=MAP_IDS.includes(requested)?requested:'foundry';
+  const id=requested==='arena'?'arena':MAP_IDS.includes(requested)?requested:'foundry';
   const m=id==='foundry'?defaultMap:EXTRA_MAPS[id];
   ACTIVE_MAP_ID=id;
   ACTIVE_MAP_NAME=m.name;

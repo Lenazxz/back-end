@@ -82,4 +82,15 @@ const triad={
  elevation:{A:-1.8,B:2.6,C:3.1},zoneNames:['TRIAD','ATRIUM','C SITE','B BACK']
 };
 
-export const EXTRA_MAPS={exchange,triad};
+const arena={
+ id:'arena',name:'BUILD ARENA',description:'Open terrain for unlimited free-for-all building, fighting and respawning.',
+ limits:{minX:-52,maxX:52,minZ:-80,maxZ:80}, sites:{},
+ spawns:{ATTACKERS:{x:-35,z:62,yaw:0},DEFENDERS:{x:35,z:-62,yaw:Math.PI}},
+ areas:[area('arena-ground','OPEN BUILD FIELD','mid',-49,-77,49,77)],holes:[],
+ labels:[loc('CENTRAL FIELD',0,0),loc('NORTH RIDGE',-26,-48),loc('SOUTH FIELD',23,45)],
+ cover:[cover(-19,18,'crate',3,3,2),cover(17,-17,'crate',3,3,2),cover(-31,-31,'crate',2.5,2.5,1.3),cover(33,30,'crate',2.5,2.5,1.3)],
+ balconies:[deck('NORTH RIDGE',-27,-49,2.5,11,8),deck('SOUTH RIDGE',29,48,2.5,11,8)],
+ ramps:[ramp('NORTH RISE',-27,-41,2.5,0,4,9),ramp('SOUTH RISE',29,40,2.5,Math.PI,4,9)],
+ elevation:{},zoneNames:['ARENA','OPEN FIELD','RIDGE']
+};
+export const EXTRA_MAPS={exchange,triad,arena};

@@ -30,6 +30,8 @@ export class ArenaEngine {
     this.abilityFeedback='';
     this.charges={q:0,f:0};this.ultimatePoints=0;this.armor=0;this.hasteUntil=0;this.flashUntil=0;
     this.gameMode = gameMode;
+    this.isBuildArena=gameMode==='arenaOnline';
+    this.arenaLeaderboard=[];this.arenaCooldowns={q:0,f:0,ultimate:0};this.arenaRespawnSerial=-1;this.arenaRespawnAt=0;
     this.onlinePhase = network ? 'WAITING' : null;
     this.onlineRoundSerial = -1;
     this.onlineSpikeSite = null;
@@ -42,9 +44,9 @@ export class ArenaEngine {
     this.scene.background = new THREE.Color('#a8bfc3');
     this.scene.fog = new THREE.Fog('#a8bfc3', 80, 190);
     this.camera = new THREE.PerspectiveCamera(76, 1, 0.1, 10000);
-    this.renderer = new THREE.WebGLRenderer({antialias: false, powerPreference: 'high-performance'});
-    this.renderer.setPixelRatio(1);
-    this.renderer.shadowMap.enabled = false;
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.2));
+    this.renderer.shadowMap.enabled = !this.isBuildArena;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -71,7 +73,7 @@ export class ArenaEngine {
     this.reserve = WEAPONS.sidearm.reserve;
     this.credits = STARTING_CREDITS;
     this.localBuyTimer = gameMode === 'bots' ? 18 : 0;
-    this.materials = 300;
+    this.materials = this.isBuildArena ? 999999 : 300;
     this.weaponCooldown = 0;
     this.reloading = false;
     this.reloadTimer = 0;
@@ -287,6 +289,14 @@ export class ArenaEngine {
     };
     makeWallRuns(xEdges,'x');makeWallRuns(zEdges,'z');
 
+    if(this.isBuildArena){
+      // Simple open grounds: keep physical floor, sparse cover, two low ramps and
+      // raised platforms; skip the high-detail city facade generation below.
+      for(const item of COVER)this.addBox('arena cover',item.x,item.h/2,item.z,item.w,item.h,item.d,'#79858b');
+      for(const deck of BALCONIES)this.addPlatformBox(deck.id,deck.x,deck.z,deck.w,deck.d,deck.top,'#8c9d88');
+      for(const ramp of ACCESS_RAMPS)this.makeRampMesh(ramp.x,0,ramp.z,ramp.rotation,'#868d81',false,{width:ramp.width,depth:ramp.depth,height:ramp.height});
+      return;
+    }
     for (const [site,point] of Object.entries(SITES)) {
       this.makeSite(site,point.x,point.z,site==='A'?'#cc655c':site==='B'?'#6499b1':'#d7b06e');
       this.makeSiteLabel(site,point.x,3,point.z);
@@ -1056,7 +1066,7 @@ export class ArenaEngine {
   buyWeapon(id) {
     const weapon=WEAPONS[id];
     if(!weapon)return;
-    const available=this.network?this.onlinePhase==='PRE_ROUND':this.gameMode!=='bots'||this.localBuyTimer>0;
+    const available=this.isBuildArena || (this.network?this.onlinePhase==='PRE_ROUND':this.gameMode!=='bots'||this.localBuyTimer>0);
     if(!available){this.setMessage('SHOP CLOSED · WAIT FOR NEXT ROUND',2);this.pushHud(true);return}
     if(this.network){
       this.network.emit('buyWeapon',{id},response=>{
@@ -1104,6 +1114,7 @@ export class ArenaEngine {
     if(!['q','f'].includes(slot))return;
     const ability=AGENTS[this.agentId][slot==='q'?'utility1':'utility2'];
     const affordable=this.credits>=ability.price;
+    if(this.isBuildArena)return;
     if(this.network) {
       this.network.emit('buyAbility',{slot},response=>{
         if(!response?.ok){this.setMessage(response?.error||'PURCHASE FAILED',2);return;}
@@ -1164,16 +1175,23 @@ export class ArenaEngine {
   useAbility(slot='signature') {
     if(!['signature','q','f','ultimate'].includes(slot))return;
     if(this.health<=0||this.roundResult) return;
-    if(this.network && !['CARRIED','PLANTED'].includes(this.onlinePhase))return;
+    if(this.isBuildArena && slot!=='signature'){
+      const unlocks={q:3,f:7,ultimate:12};
+      if(this.kills<unlocks[slot]){this.setMessage(`${slot.toUpperCase()} UNLOCKS AT ${unlocks[slot]} KILLS`);return;}
+      const remain=(this.arenaCooldowns[slot]||0)-Date.now();
+      if(remain>0){this.setMessage(`${slot.toUpperCase()} COOLDOWN · ${Math.ceil(remain/1000)}S`);return;}
+    }
+    if(this.network && !['CARRIED','PLANTED','ARENA'].includes(this.onlinePhase))return;
     if(!this.network && this.gameMode==='bots' && this.localBuyTimer>0)return;
     const now=Date.now();
     if(slot!=='signature'){
-      if(slot==='ultimate'&&this.ultimatePoints<AGENTS[this.agentId].ultimate.cost){this.setMessage('ULTIMATE NOT CHARGED');return;}
-      if(slot!=='ultimate'&&!this.charges[slot]){this.setMessage('BUY THIS ABILITY IN BUY PHASE');return;}
+      if(!this.isBuildArena&&slot==='ultimate'&&this.ultimatePoints<AGENTS[this.agentId].ultimate.cost){this.setMessage('ULTIMATE NOT CHARGED');return;}
+      if(!this.isBuildArena&&slot!=='ultimate'&&!this.charges[slot]){this.setMessage('BUY THIS ABILITY IN BUY PHASE');return;}
       if(this.network){
         this.network.emit('useAbility',{slot},result=>{
           if(!result?.ok){this.setMessage(result?.error||'ABILITY REJECTED');return;}
           if(result.charges)this.charges={...result.charges};
+          if(result.arenaCooldowns)this.arenaCooldowns={...result.arenaCooldowns};
           if(Number.isFinite(result.ultimatePoints))this.ultimatePoints=result.ultimatePoints;
           if(Number.isFinite(result.armor))this.armor=result.armor;
           if(Number.isFinite(result.health))this.health=result.health;
@@ -1359,7 +1377,7 @@ export class ArenaEngine {
 
   updateMovement(delta) {
     if (this.health <= 0 || (!this.network && this.roundResult)) return;
-    if (this.network && !['CARRIED','PLANTED'].includes(this.onlinePhase)) return;
+    if (this.network && !['CARRIED','PLANTED','ARENA'].includes(this.onlinePhase)) return;
     if (!this.network && this.gameMode==='bots' && this.localBuyTimer>0)return;
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
@@ -1461,19 +1479,19 @@ export class ArenaEngine {
     this.preview.visible = true;
     this.preview.position.set(p.x, p.y, p.z);
     this.preview.rotation.set(0, p.rotation, 0);
-    this.previewValid = this.validateBuild(p) && this.materials >= BUILD_COSTS[this.buildPiece];
+    this.previewValid = this.validateBuild(p) && (this.isBuildArena || this.materials >= BUILD_COSTS[this.buildPiece]);
     this.preview.material.color.set(this.previewValid ? '#79e2a8' : '#e66d65');
   }
 
   placeBuild() {
     if (this.health <= 0 || (!this.network && this.roundResult)) return;
-    if (this.network && !['CARRIED','PLANTED'].includes(this.onlinePhase)) return;
+    if (this.network && !['CARRIED','PLANTED','ARENA'].includes(this.onlinePhase)) return;
     if (!this.buildMode) return;
     const p = this.getBuildPlacement();
     if (!this.validateBuild(p)) { this.setMessage('CANNOT BUILD HERE'); return; }
     const cost = BUILD_COSTS[this.buildPiece];
-    if (this.materials < cost) { this.setMessage('NOT ENOUGH MATERIALS'); return; }
-    this.materials -= cost;
+    if (!this.isBuildArena&&this.materials < cost) { this.setMessage('NOT ENOUGH MATERIALS'); return; }
+    if(!this.isBuildArena)this.materials -= cost;
     const kind = this.buildPiece;
     const mesh = this.createBuildMesh(kind, false);
     mesh.position.set(p.x, p.y, p.z);
@@ -1495,7 +1513,7 @@ export class ArenaEngine {
       this.surfaces.push({ type: 'ramp', x: p.x, z: p.z, y: p.y, rotation: p.rotation, width: 2, depth: 2, height: 2, mesh });
     }
     if (this.network) this.network.emit('build', {kind, x:p.x, y:p.y, z:p.z, rotation:p.rotation, level:p.level,cellX:p.cellX,cellZ:p.cellZ,quarter:quarterFromYaw(this.yaw)});
-    this.setMessage(`${BUILD_LABELS[kind]} PLACED · −${cost} MATERIAL`);
+    this.setMessage(this.isBuildArena?`${BUILD_LABELS[kind]} PLACED`:`${BUILD_LABELS[kind]} PLACED · −${cost} MATERIAL`);
     this.pushHud(true);
   }
 
@@ -1752,7 +1770,10 @@ export class ArenaEngine {
 
   fire() {
     if(this.health<=0||(!this.network&&this.roundResult))return;
-    if(this.network&&!['CARRIED','PLANTED'].includes(this.onlinePhase))return;
+    if(this.network&&!['CARRIED','PLANTED','ARENA'].includes(this.onlinePhase)){
+      if(this.onlinePhase==='PRE_ROUND')this.setMessage('BUY PHASE · WEAPONS ENABLE WHEN COUNTDOWN ENDS',1.5);
+      return;
+    }
     if(!this.network&&this.gameMode==='bots'&&this.localBuyTimer>0)return;
     if(this.weaponCooldown>0||this.reloading)return;
     if(this.ammo<=0){this.reload();return}
@@ -1767,7 +1788,7 @@ export class ArenaEngine {
     const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)).normalize();
     const up=new THREE.Vector3().crossVectors(right,forward).normalize();
     const start=origin.clone().add(forward.clone().multiplyScalar(.65));
-    const active=this.targetParts.filter(part=>part.userData.targetRoot?.userData?.alive&&part.userData.targetRoot.userData.team!==this.role);
+    const active=this.targetParts.filter(part=>part.userData.targetRoot?.userData?.alive&&(this.isBuildArena||part.userData.targetRoot.userData.team!==this.role));
     const objects=[...this.solidMeshes,...active];
     const damageByTarget=new Map();
     let bestEnd=null;
@@ -1804,7 +1825,12 @@ export class ArenaEngine {
       if(n<4)this.spawnTracer(start,end);
     }
     for(const [target,damage] of damageByTarget)this.applyBotDamage(target,Math.round(damage),{userData:{team:this.role,botName:'YOU'}});
-    if(this.network)this.network.emit('shoot',{direction:forward.toArray()});
+    if(this.network)this.network.emit('shoot',{direction:forward.toArray()},response=>{
+      if(this.isDisposed)return;
+      if(response?.hit?.damage>0)this.setMessage(`CONFIRMED HIT · ${response.hit.damage} DAMAGE`,0.9);
+      else if(response?.error==='ROUND NOT LIVE')this.setMessage('WAIT FOR ROUND START · DAMAGE DISABLED DURING BUY',1.7);
+      else if(response?.error==='AIM NOT SYNCHRONIZED')this.setMessage('RE-SYNCING AIM · TRY FIRING AGAIN',1.1);
+    });
     this.pushHud(true);
   }
 
@@ -1883,8 +1909,8 @@ export class ArenaEngine {
     const now = performance.now();
     if (!force && now - this.lastHudAt < 160) return;
     this.lastHudAt = now;
-    const allies = this.network ? [...this.remotePlayers.values()].filter(a => a.visible && a.userData.team === this.role) : this.targets.filter(bot => bot.userData.alive && bot.userData.team === this.role);
-    const hostiles = this.network ? [...this.remotePlayers.values()].filter(a => a.visible && a.userData.team !== this.role) : this.targets.filter(bot => bot.userData.alive && bot.userData.team !== this.role);
+    const allies = this.network ? [...this.remotePlayers.values()].filter(a => a.visible && a.userData.team === this.role && !this.isBuildArena) : this.targets.filter(bot => bot.userData.alive && bot.userData.team === this.role);
+    const hostiles = this.network ? [...this.remotePlayers.values()].filter(a => a.visible && (this.isBuildArena||a.userData.team !== this.role)) : this.targets.filter(bot => bot.userData.alive && bot.userData.team !== this.role);
     this.killFeed = this.killFeed.filter(entry => now - entry.created < 8500);
     const reconCenters=this.network?this.reconCenters||[]:(Date.now()<this.reconUntil?[{x:this.camera.position.x,z:this.camera.position.z}]:[]);
     const revealed=(x,z)=>reconCenters.some(p=>Math.hypot(p.x-x,p.z-z)<=25)||
@@ -1896,7 +1922,7 @@ export class ArenaEngine {
     })).filter(a=>a.team===this.role || revealed(a.x,a.z));
     this.onHud?.({
       health: Math.round(this.health),
-      kitCharges:{...this.charges},ultimatePoints:this.ultimatePoints,armor:this.armor,
+      kitCharges:{...this.charges},ultimatePoints:this.ultimatePoints,armor:this.armor,arenaCooldowns:{...this.arenaCooldowns},arenaLeaderboard:this.arenaLeaderboard,isBuildArena:this.isBuildArena,
       flashRemaining:Math.max(0,(this.flashUntil-Date.now())/1000),
       ammo: this.ammo,
       reserve: this.reserve,
@@ -1904,7 +1930,7 @@ export class ArenaEngine {
       weapon: weaponById(this.weaponId).name,
       weaponId:this.weaponId,
       credits:this.credits,
-      canBuy:this.network?this.onlinePhase==='PRE_ROUND':this.gameMode!=='bots'||this.localBuyTimer>0,
+      canBuy:this.isBuildArena|| (this.network?this.onlinePhase==='PRE_ROUND':this.gameMode!=='bots'||this.localBuyTimer>0),
       mode: this.buildMode ? 'BUILD' : 'COMBAT',
       buildPiece: BUILD_LABELS[this.buildPiece],
       buildLayer: this.buildLevelOffset,
@@ -1984,6 +2010,7 @@ export class ArenaEngine {
     for (const piece of (this.network.initialBuilds || [])) this.onBuildPlacedPending = [...(this.onBuildPlacedPending || []), piece];
     this.onSnapshot = (state) => {
       this.onlineObjective = state.objective;
+      if(this.isBuildArena)this.arenaLeaderboard=[...state.players].sort((a,b)=>b.kills-a.kills||a.deaths-b.deaths).map(p=>({id:p.id,name:p.id===this.network.id?'YOU':`PLAYER ${p.id.slice(0,4)}`,kills:p.kills,deaths:p.deaths}));
       this.onlinePhase = state.phase;
       this.spikeCarrierId=state.spikeCarrier||null;
       this.reconCenters=state.players.filter(p=>p.role===this.role&&p.reconUntil>Date.now()).map(p=>({x:p.x,z:p.z}));
@@ -2006,6 +2033,14 @@ export class ArenaEngine {
         if(Number.isFinite(self.abilityReadyAt))this.abilityReadyAt=self.abilityReadyAt;
         if(Number.isFinite(self.reconUntil))this.reconUntil=self.reconUntil;
         if(self.charges)this.charges={...self.charges};
+        if(self.arenaCooldowns)this.arenaCooldowns={...self.arenaCooldowns};
+        if(this.isBuildArena)this.arenaRespawnAt=self.respawnAt||0;
+        if(this.isBuildArena && Number.isInteger(self.respawnSerial)&&self.respawnSerial!==this.arenaRespawnSerial){
+          this.arenaRespawnSerial=self.respawnSerial;
+          this.camera.position.set(self.x,self.y+PLAYER_HEIGHT,self.z);this.yaw=self.yaw;
+          this.camera.rotation.set(0,this.yaw,0,'YXZ');this.velocityY=0;this.mouseHeld=false;this.damageFlash=0;
+          if(self.respawnSerial>0)this.setMessage('RESPAWNED · SPAWN SHIELD ACTIVE',2);
+        }
         if(Number.isFinite(self.ultimatePoints))this.ultimatePoints=self.ultimatePoints;
         if(Number.isFinite(self.armor))this.armor=self.armor;
         if(Number.isFinite(self.hasteUntil))this.hasteUntil=self.hasteUntil;
@@ -2017,7 +2052,7 @@ export class ArenaEngine {
           this.yaw = self.yaw;
           this.pitch = 0;
           this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
-          this.equipWeapon(self.weapon||'sidearm',self.ammo,self.reserve);this.materials=300;this.velocityY=0;
+          this.equipWeapon(self.weapon||'sidearm',self.ammo,self.reserve);this.materials=this.isBuildArena?999999:300;this.velocityY=0;
           this.reloading=false;this.weaponCooldown=0;this.buildMode=false;this.mouseHeld=false;
           if(this.preview) this.preview.visible=false;
           this.setMessage(state.phase === 'PRE_ROUND' ? `ROUND ${state.objective?.round ?? 1} · PREPARE` : 'ROUND LIVE',2);
@@ -2072,6 +2107,7 @@ export class ArenaEngine {
       playAgentAction(this.remotePlayers.get(data.id),'fire');
     };
     this.onResetBuilds = () => {
+      if(this.isBuildArena)return;
       this.velocityY=0;this.equipWeapon('sidearm');this.materials=300;
       this.mouseHeld=false;this.buildMode=false;
       if(this.preview) this.preview.visible=false;
@@ -2105,6 +2141,8 @@ export class ArenaEngine {
     this.network.on('resetBuilds',this.onResetBuilds);
     this.network.on('elimination',this.onElimination);
     this.network.on('abilityEffect',this.onAbilityEffect);
+    this.onArenaBuilds=(builds)=>{for(const item of builds||[])this.onBuildPlaced(item)};
+    this.network.on('arenaBuilds',this.onArenaBuilds);
   }
 
   updateNetwork() {
@@ -2120,7 +2158,7 @@ export class ArenaEngine {
     this.isDisposed = true;
     cancelAnimationFrame(this.frameId);
     this.resizeObserver?.disconnect();
-    if (this.network) { this.network.off('snapshot',this.onSnapshot); this.network.off('buildPlaced',this.onBuildPlaced); this.network.off('shot',this.onRemoteShot); this.network.off('hit',this.onHit); this.network.off('resetBuilds',this.onResetBuilds); this.network.off('elimination',this.onElimination);this.network.off('abilityEffect',this.onAbilityEffect); }
+    if (this.network) { this.network.off('snapshot',this.onSnapshot); this.network.off('buildPlaced',this.onBuildPlaced); this.network.off('shot',this.onRemoteShot); this.network.off('hit',this.onHit); this.network.off('resetBuilds',this.onResetBuilds); this.network.off('elimination',this.onElimination);this.network.off('abilityEffect',this.onAbilityEffect);this.network.off('arenaBuilds',this.onArenaBuilds); }
     window.removeEventListener('keydown', this.handleKeyDown);
     window.removeEventListener('keyup', this.handleKeyUp);
     window.removeEventListener('mousemove', this.handleMouseMove);
