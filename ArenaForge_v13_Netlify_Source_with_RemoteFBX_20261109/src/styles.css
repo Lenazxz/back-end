@@ -507,3 +507,8 @@ h1 em { color: #d89970; font-style: normal; }
 .v13-map-buttons button { padding: 10px 11px; border: 1px solid #667d85; background: #152831; font: 10px 'DM Mono',monospace; letter-spacing:.035em; color:#d9e4e8; }
 .v13-map-buttons button:hover,.v13-map-buttons button.active { border-color: #e3ac7d; background:#334350; color:#ffe5c7; }
 .site-ring-C { fill: rgba(205,163,86,.32); stroke:#f3be6c; }
+
+/* Arena v14: compact live leaderboard and endless-mode score */
+.arena-top-score{padding:8px 16px;background:#102529ed;color:#9ef2e1;border:1px solid #5a9e90;border-radius:9px;font-weight:800;letter-spacing:.07em}
+.arena-leaderboard{position:absolute;top:112px;right:16px;min-width:210px;z-index:5;background:#10202ce8;color:#e3f6ef;padding:12px 15px;border-radius:8px;font-size:12px;pointer-events:none}
+.arena-leaderboard>strong{display:block;margin-bottom:9px;color:#7ce5c3}.arena-leaderboard>div{display:grid;grid-template-columns:1fr 28px 28px;gap:5px;padding:4px 0;border-bottom:1px solid #ffffff1a}.arena-leaderboard span{text-align:right}.arena-leaderboard small{display:block;margin-top:10px;opacity:.85}

@@ -80,6 +80,7 @@ function App() {
   const [selectedMapId,setSelectedMapId]=useState('foundry');
   const [activeMapId,setActiveMapId]=useState('foundry');
   const [agentLocked, setAgentLocked] = useState(false);
+  const [hasPlayedOnline, setHasPlayedOnline] = useState(false);
   const [agentError, setAgentError] = useState('');
   const [selectedRole, setSelectedRole] = useState('attack');
   const [gameMode, setGameMode] = useState('attackDrill');
@@ -121,6 +122,10 @@ function App() {
     return ()=>window.removeEventListener('keydown',handler,true);
   },[started,showShop]);
 
+  useEffect(() => {
+    if(isOnline && ['CARRIED','PLANTED','ROUND_OVER','MATCH_OVER'].includes(hud.phase))setHasPlayedOnline(true);
+  },[isOnline,hud.phase]);
+
   const handleHud = React.useCallback((next) => {
     setHud((current) => ({ ...current, ...next }));
   }, []);
@@ -136,6 +141,7 @@ function App() {
     setShowShop(false);
     setPendingMode(null);
     setAgentLocked(false);
+    setHasPlayedOnline(false);
     setConnecting(false);
   }, []);
 
@@ -153,6 +159,7 @@ function App() {
     setActiveMapId(selectedMapId);
     setPendingMode(null);
     setAgentLocked(false);
+    setHasPlayedOnline(false);
     setShowShop(false);
     setHud({
       ...initialHud,
@@ -162,7 +169,7 @@ function App() {
     setStarted(true);
   };
 
-  const connectRoom = (create = false, quick = false) => {
+  const connectRoom = (create = false, quick = false, arena = false) => {
     if (connecting) return;
     setConnecting(true);
     setNetworkError('');
@@ -179,12 +186,12 @@ function App() {
       setConnecting(false);
     });
     socket.on('connect', () => {
-      const eventName = quick ? 'joinQuickPlay' : create ? 'createRoom' : 'joinRoom';
-      const payload = quick ? {} : create ? {mapId:selectedMapId} : { code: roomCode.trim().toUpperCase() };
+      const eventName = arena?'joinArena':quick ? 'joinQuickPlay' : create ? 'createRoom' : 'joinRoom';
+      const payload = arena?{agent:selectedAgent}:quick ? {} : create ? {mapId:selectedMapId} : { code: roomCode.trim().toUpperCase() };
       socket.timeout(11000).emit(eventName, payload, (error, response) => {
         setConnecting(false);
         if (error || !response?.ok) {
-          const details = quick ? 'The Render service must be updated to v13 for map rotation.' : '';
+          const details=arena?'Update the Render server with the v14 Arena files first.':quick?'The Render service must be updated to v13 for map rotation.':'';
           setNetworkError(`${response?.error || 'NO MATCH RESPONSE FROM SERVER'}. ${details}`);
           socket.disconnect();
           return;
@@ -198,10 +205,11 @@ function App() {
         setSelectedRole(response.role === 'DEFENDERS' ? 'defend' : 'attack');
         setNetwork(socket);
         setIsOnline(true);
-        setGameMode(quick ? 'onlineQuick' : 'online');
-        setAgentLocked(false);
+        setGameMode(arena?'arenaOnline':quick ? 'onlineQuick' : 'online');
+        setAgentLocked(arena);
+        setHasPlayedOnline(arena);
         setAgentError('');
-        setHud({ ...initialHud, role: response.role, phase: 'WAITING',
+        setHud({ ...initialHud, role: response.role, phase: arena?'ARENA':'WAITING',
           objective: response.objective?.objective || 'MATCHMAKING' });
         setStarted(true);
       });
@@ -227,9 +235,9 @@ function App() {
 
   if (pendingMode) {
     return <AgentSelector selected={selectedAgent} onChoose={setSelectedAgent}
-      onConfirm={()=>startLocalMode(pendingMode)} confirmLabel="START MATCH"
+      onConfirm={()=>pendingMode==='arena'? (setPendingMode(null),connectRoom(false,false,true)):startLocalMode(pendingMode)} confirmLabel={pendingMode==='arena'?'ENTER BUILD ARENA':'START MATCH'}
       phase="LOCAL MATCH" onCancel={()=>setPendingMode(null)}
-      note="Choose your agent before entering Play with Bots or a training drill." />;
+      note={pendingMode==='arena'?'Choose your operative for continuous free-for-all building combat.':'Choose your agent before entering Play with Bots or a training drill.'} />;
   }
 
   if (started) {
@@ -237,25 +245,26 @@ function App() {
       <main className="game-shell">
         <GameView key={activeMapId} onHud={handleHud} onExit={exitGame} role={selectedRole} network={network} gameMode={gameMode} agentId={selectedAgent} controllerRef={gameControllerRef} mapId={activeMapId} />
         <div className="top-hud">
-          <div className="match-label"><span className="live-dot" /> {hud.mapName||ACTIVE_MAP_NAME} · V13 <span className="hud-divider">/</span> {isOnline ? `${gameMode === 'onlineQuick' ? 'QUICK PLAY' : 'PRIVATE'} · ${onlineCount}/10` : gameMode === 'bots' ? 'PLAY WITH BOTS' : 'TACTICAL DRILLS'}</div>
-          <div className="match-scoreboard" aria-label="Round score">
+          <div className="match-label"><span className="live-dot" /> {hud.mapName||ACTIVE_MAP_NAME} · V14 <span className="hud-divider">/</span> {isOnline ? `${gameMode === 'arenaOnline' ? 'BUILD ARENA' : gameMode === 'onlineQuick' ? 'QUICK PLAY' : 'PRIVATE'} · ${onlineCount}/10` : gameMode === 'bots' ? 'PLAY WITH BOTS' : 'TACTICAL DRILLS'}</div>
+          {gameMode==='arenaOnline'?<div className="arena-top-score">FREE FOR ALL · KILLS {hud.kills||0} · DEATHS {hud.deaths||0}</div>:<div className="match-scoreboard" aria-label="Round score">
             <span className="score-label attack-label">ATTACKERS</span>
             <strong className="score-number">{hud.score?.ATTACKERS ?? 0}</strong>
             <span className="score-timer">{hud.clock}<small>ROUND {hud.round || 1}</small></span>
             <strong className="score-number">{hud.score?.DEFENDERS ?? 0}</strong>
             <span className="score-label defender-label">DEFENDERS</span>
-          </div>
-          <div className="site-status"><span className="site-chip">A</span><span className="site-chip">B</span></div>
+          </div>}
+          {gameMode!=='arenaOnline'&&<div className="site-status"><span className="site-chip">A</span><span className="site-chip">B</span></div>}
         </div>
-        <div className={`side-banner ${hud.role === 'ATTACKERS'?'side-attacker':'side-defender'}`}>
+        {gameMode!=='arenaOnline'&&<div className={`side-banner ${hud.role === 'ATTACKERS'?'side-attacker':'side-defender'}`}>
           <strong>{hud.role === 'ATTACKERS'?'ATTACKING TEAM':'DEFENDING TEAM'}</strong>
           <span>{hud.role === 'ATTACKERS'?'PLANT THE SPIKE':'DEFEND THE SITES'}</span>
-        </div>
-        <div className={`spike-banner ${hud.isSpikeCarrier?'spike-owned':''}`}>
+        </div>}
+        {gameMode!=='arenaOnline'&&<div className={`spike-banner ${hud.isSpikeCarrier?'spike-owned':''}`}>
           <span className="spike-symbol">◆</span>
           <strong>{hud.spikeSite ? `SPIKE PLANTED · ${hud.spikeSite}` : hud.isSpikeCarrier?'YOU HAVE THE SPIKE':`SPIKE CARRIER: ${hud.carrierLabel||'UNASSIGNED'}`}</strong>
-        </div>
+        </div>}
         <div className="objective-strip"><strong>{hud.objective}</strong><span>{hud.actionHint}</span>{hud.objectiveProgress > 0 && <i><b style={{ width: `${Math.min(100, hud.objectiveProgress * 100)}%` }} /></i>}</div>
+        {gameMode==='arenaOnline'&&<div className="arena-leaderboard"><strong>LIVE LEADERBOARD</strong><div>PLAYER <span>K</span><span>D</span></div>{(hud.arenaLeaderboard||[]).slice(0,10).map((p,i)=><div key={p.id}><b>{i+1}. {p.name}</b><span>{p.kills}</span><span>{p.deaths}</span></div>)}<small>Q: 3 KILLS · F: 7 KILLS · V: 12 KILLS</small></div>}
         <div className="tactical-readout">
           <span className="team-count allies-count">YOUR TEAM <b>{hud.allies ?? 1}</b></span>
           <span className="team-count enemies-count">OPPONENTS <b>{hud.enemies ?? 0}</b></span>
@@ -306,15 +315,15 @@ function App() {
           <div className="player-card"><div className="player-mark">AF</div><div><strong>FIELD OPERATIVE</strong><small>{isOnline ? `ROOM ${activeRoom}` : gameMode === 'bots' ? 'PLAY WITH BOTS' : 'TRAINING DRILL'}</small></div></div>
           <div className="health-line"><span>HEALTH</span><strong>{hud.health}</strong></div>
           <div className="health-track"><span style={{ width: `${hud.health}%` }} /></div>
-          <div className="build-readout"><span className="material-icon">◆</span><span>{hud.materials}</span><small>BUILD MATERIAL</small></div>
+          <div className="build-readout"><span className="material-icon">◆</span><span>{gameMode==='arenaOnline'?'∞':hud.materials}</span><small>BUILD MATERIAL</small></div>
           <div className="agent-in-game"><span>OPERATIVE · {AGENTS[hud.agentId]?.name||AGENTS[selectedAgent].name}</span><strong>{AGENTS[hud.agentId]?.signature.name||AGENTS[selectedAgent].signature.name}</strong><small>{hud.abilityCooldown>0 ? `C · RECHARGING ${Math.ceil(hud.abilityCooldown)}S` : 'C · SIGNATURE READY'}</small></div>
           <div className="v12-kit-hud">
             <header><span>ABILITY LOADOUT</span><b>ARMOR {Math.round(hud.armor||0)}</b></header>
             <div className="v12-kit-slots">
-              <div className={`v12-kit-slot ${(hud.kitCharges?.q||0)===0?'is-empty':''}`}><strong>Q</strong><span>UTILITY 1</span><small>× {hud.kitCharges?.q||0}</small></div>
+              <div className={`v12-kit-slot ${(gameMode!=='arenaOnline'&&(hud.kitCharges?.q||0)===0)||(gameMode==='arenaOnline'&&(hud.kills||0)<3)?'is-empty':''}`}><strong>Q</strong><span>UTILITY 1</span><small>{gameMode==='arenaOnline' ? (hud.kills<3?`${3-(hud.kills||0)} MORE KILLS`:(hud.arenaCooldowns?.q||0)>Date.now()?`${Math.ceil((hud.arenaCooldowns.q-Date.now())/1000)}s`:'READY') : `× ${hud.kitCharges?.q||0}`}</small></div>
               <div className="v12-kit-slot"><strong>C</strong><span>SIGNATURE</span><small>{hud.abilityCooldown>0?`${Math.ceil(hud.abilityCooldown)}s`:'READY'}</small></div>
-              <div className={`v12-kit-slot ${(hud.kitCharges?.f||0)===0?'is-empty':''}`}><strong>F</strong><span>UTILITY 2</span><small>× {hud.kitCharges?.f||0}</small></div>
-              <div className={`v12-kit-slot is-ultimate ${(hud.ultimatePoints||0)<(AGENTS[hud.agentId||selectedAgent].ultimate.cost)?'is-empty':''}`}><strong>V</strong><span>ULTIMATE</span><small>{hud.ultimatePoints||0}/{AGENTS[hud.agentId||selectedAgent].ultimate.cost}</small></div>
+              <div className={`v12-kit-slot ${(gameMode!=='arenaOnline'&&(hud.kitCharges?.f||0)===0)||(gameMode==='arenaOnline'&&(hud.kills||0)<7)?'is-empty':''}`}><strong>F</strong><span>UTILITY 2</span><small>{gameMode==='arenaOnline' ? (hud.kills<7?`${7-(hud.kills||0)} MORE KILLS`:(hud.arenaCooldowns?.f||0)>Date.now()?`${Math.ceil((hud.arenaCooldowns.f-Date.now())/1000)}s`:'READY') : `× ${hud.kitCharges?.f||0}`}</small></div>
+              <div className={`v12-kit-slot is-ultimate ${(gameMode==='arenaOnline'?(hud.kills||0)<12:(hud.ultimatePoints||0)<(AGENTS[hud.agentId||selectedAgent].ultimate.cost))?'is-empty':''}`}><strong>V</strong><span>ULTIMATE</span><small>{gameMode==='arenaOnline' ? (hud.kills<12?`${12-(hud.kills||0)} MORE KILLS`:(hud.arenaCooldowns?.ultimate||0)>Date.now()?`${Math.ceil((hud.arenaCooldowns.ultimate-Date.now())/1000)}s`:'READY') : `${hud.ultimatePoints||0}/${AGENTS[hud.agentId||selectedAgent].ultimate.cost}`}</small></div>
             </div>
           </div>
           <div className="kda-readout">ELIMS <b>{hud.kills || 0}</b><span> / </span> DEATHS <b>{hud.deaths || 0}</b></div>
@@ -327,30 +336,31 @@ function App() {
           <div className="credits-row"><span>CREDITS</span><strong>₡ {hud.credits ?? STARTING_CREDITS}</strong></div>
           <button className="shop-hud-button" onClick={()=>{ document.exitPointerLock?.();setShowShop(true); }} disabled={!hud.canBuy}>M · BUY LOADOUT</button>
         </div>
-        <div className="bottom-hint"><span className="keycap">W A S D</span> MOVE <span className="hint-gap"/><span className="keycap">SPACE</span> JUMP <span className="hint-gap"/><span className="keycap">B</span> BUILD <span className="hint-gap"/><span className="keycap">X / Z</span> BUILD HEIGHT <span className="hint-gap"/><span className="keycap">E</span> OBJECTIVE <span className="hint-gap"/><span className="keycap">Q / F</span> UTILITIES <span className="hint-gap"/><span className="keycap">C</span> SIGNATURE <span className="hint-gap"/><span className="keycap">V</span> ULTIMATE <span className="hint-gap"/><span className="keycap">M</span> SHOP <span className="hint-gap"/><span className="keycap">R</span> RELOAD <span className="hint-gap"/><span className="keycap">ESC</span> MENU</div>
-        {isOnline && (['WAITING','AGENT_SELECT'].includes(hud.phase) || (hud.phase==='PRE_ROUND'&&!agentLocked&&!hud.agentLocked)) &&
+        <div className="bottom-hint"><span className="keycap">W A S D</span> MOVE <span className="hint-gap"/><span className="keycap">SPACE</span> JUMP <span className="hint-gap"/><span className="keycap">B</span> BUILD <span className="hint-gap"/><span className="keycap">X / Z</span> BUILD HEIGHT <span className="hint-gap"/>{gameMode!=='arenaOnline'&&<><span className="keycap">E</span> OBJECTIVE <span className="hint-gap"/></>} <span className="hint-gap"/><span className="keycap">Q / F</span> UTILITIES <span className="hint-gap"/><span className="keycap">C</span> SIGNATURE <span className="hint-gap"/><span className="keycap">V</span> ULTIMATE <span className="hint-gap"/><span className="keycap">M</span> SHOP <span className="hint-gap"/><span className="keycap">R</span> RELOAD <span className="hint-gap"/><span className="keycap">ESC</span> MENU</div>
+        {isOnline && !hasPlayedOnline && (['WAITING','AGENT_SELECT'].includes(hud.phase) || (hud.phase==='PRE_ROUND'&&!agentLocked&&!hud.agentLocked)) &&
           <AgentSelector selected={selectedAgent} onChoose={setSelectedAgent}
             onConfirm={lockOnlineAgent} locked={agentLocked||!!hud.agentLocked}
             phase={hud.phase==='WAITING'?'WAITING FOR PLAYERS':'AGENT SELECTION'}
             timer={hud.clock} error={agentError}
             onCancel={exitGame}
             note="Choose your operative before Round 1. Once locked, your choice stays active for the match." />}
+        {isOnline && hasPlayedOnline && hud.phase === 'WAITING' && <div className="queue-overlay"><strong>WAITING FOR OPPONENT</strong><span>YOUR OPERATIVE IS SAVED · MATCH CONTINUES WHEN ANOTHER PLAYER JOINS</span><button onClick={exitGame}>LEAVE MATCH</button></div>}
         {showShop && <div className="armory-scrim" role="dialog" aria-label="Weapon buying shop" aria-modal="true">
           <div className="armory-panel">
             <div className="armory-heading"><div><small>ARMORY · ROUND {hud.round || 1}</small><h2>WEAPONS & ABILITIES</h2></div><button onClick={()=>setShowShop(false)} aria-label="Close armory">✕</button></div>
-            <p className="armory-intro">{hud.canBuy?'Buy weapons before the round starts. Equipped gear resets each new round.':'Shop closed — view the catalog and return next buy phase.'} <strong>YOUR CREDITS: ₡ {hud.credits ?? STARTING_CREDITS}</strong></p>
+            <p className="armory-intro">{gameMode==='arenaOnline'?'Choose any weapon for free. Abilities unlock automatically from eliminations.':hud.canBuy?'Buy weapons before the round starts. Equipped gear resets each new round.':'Shop closed — view the catalog and return next buy phase.'} <strong>YOUR CREDITS: ₡ {hud.credits ?? STARTING_CREDITS}</strong></p>
             <div className="armory-grid">
-              {WEAPON_LIST.map(id=>{const w=WEAPONS[id];const selected=hud.weaponId===id;const affordable=(hud.credits??0)>=w.price;
+              {WEAPON_LIST.map(id=>{const w=WEAPONS[id];const selected=hud.weaponId===id;const affordable=gameMode==='arenaOnline'||(hud.credits??0)>=w.price;
                 return <button key={id} className={`armory-item ${selected?'equipped':''}`} disabled={!hud.canBuy||selected||!affordable}
                   onClick={()=>gameControllerRef.current?.buyWeapon(id)}>
                   <span className="armory-category">{w.category}</span>
                   <strong>{w.name}</strong><small>{w.description}</small>
                   <div className="armory-stats"><span>DMG {w.id==='shotgun'?`${w.damage}×${w.pellets}`:w.damage}</span><span>MAG {w.magazine}</span></div>
-                  <span className="armory-price">{selected?'EQUIPPED':w.price===0?'FREE':`₡ ${w.price.toLocaleString()}`}</span>
+                  <span className="armory-price">{selected?'EQUIPPED':gameMode==='arenaOnline'||w.price===0?'FREE':`₡ ${w.price.toLocaleString()}`}</span>
                 </button>;
               })}
             </div>
-            <h3 className="armory-abilities-heading">{AGENTS[hud.agentId||selectedAgent].name} · PURCHASABLE ABILITIES</h3>
+            {gameMode!=='arenaOnline'&&<><h3 className="armory-abilities-heading">{AGENTS[hud.agentId||selectedAgent].name} · PURCHASABLE ABILITIES</h3>
             <div className="armory-utility-grid">
               {(['q','f']).map(slot=>{
                 const kit=AGENTS[hud.agentId||selectedAgent];
@@ -366,9 +376,11 @@ function App() {
                 </button>;
               })}
             </div>
+            </>}
             <div className="armory-bottom"><span>{hud.phase==='PRE_ROUND'?'BUY PHASE · '+hud.clock+' REMAINING':'CLOSE SHOP TO RESUME'}</span><button onClick={()=>setShowShop(false)}>CLOSE SHOP · M</button></div>
           </div>
         </div>}
+        {gameMode==='arenaOnline'&&hud.health<=0&&<div className="round-overlay"><strong>ELIMINATED</strong><span>RESPAWNING IN {Math.max(0,Math.ceil(((hud.respawnAt||0)-Date.now())/1000))} SECONDS</span></div>}
         <div className="damage-overlay" style={{opacity: Math.min(0.55, (hud.damageFlash || 0) * 1.6)}} />
         {hud.flashRemaining>0&&<div className="flash-overlay" role="status">DISORIENTED · {hud.flashRemaining.toFixed(1)}s</div>}
         {hud.roundResult && <div className="round-overlay"><strong>{hud.roundResult}</strong><span>{hud.phase === 'MATCH_OVER' ? 'MATCH FINISHED · REMATCH STARTING' : 'ROUND COMPLETE · NEXT ROUND STARTING'}</span></div>}
@@ -389,7 +401,7 @@ function App() {
   return (
     <main className="menu-shell menu-shell-v7">
       <div className="menu-backdrop"><div className="backdrop-grid"/><div className="backdrop-orb orb-one"/><div className="backdrop-orb orb-two"/><div className="backdrop-slab slab-one"/><div className="backdrop-slab slab-two"/></div>
-      <header className="brand-bar"><div className="brand"><div className="brand-symbol">A<span>F</span></div><div><strong>ARENA FORGE</strong><small>THREE ROTATING TACTICAL MAPS · REAL 3D OPERATIVES</small></div></div><div className="build-tag">PRE-ALPHA <span>13.0</span></div></header>
+      <header className="brand-bar"><div className="brand"><div className="brand-symbol">A<span>F</span></div><div><strong>ARENA FORGE</strong><small>THREE TACTICAL MAPS + BUILD ARENA · REAL 3D OPERATIVES</small></div></div><div className="build-tag">PRE-ALPHA <span>14.0</span></div></header>
       <section className="menu-content">
         <div className="eyebrow"><span className="eyebrow-line"/> IRONVEIL FOUNDRY / DAYLIGHT URBAN DISTRICT <span className="eyebrow-line"/></div>
         <h1>HOLD THE SITE.<br/><em>BUILD THE FIGHT.</em></h1>
@@ -408,6 +420,7 @@ function App() {
 
         <div className="menu-actions">
           <button className="primary-button quickplay-button" onClick={() => connectRoom(false, true)} disabled={connecting}><span>{connecting ? 'FINDING SERVER…' : 'QUICK PLAY'}</span><b>↗</b></button>
+          <button className="primary-button" onClick={() => {setPendingMode('arena');setAgentError('');}}><span>BUILD ARENA · FREE FOR ALL</span><b>↗</b></button>
           <button className="secondary-button" onClick={() => {setPendingMode('bots');setAgentError('');}}><span>PLAY WITH BOTS</span><b>↗</b></button>
           <button className="secondary-button" onClick={() => setShowDrills((v) => !v)}>DRILLS <span>{showDrills ? '−' : '＋'}</span></button>
           <button className="secondary-button" onClick={() => setShowOnline((v) => !v)}>PRIVATE ROOM <span>{showOnline ? '−' : '＋'}</span></button>
@@ -447,7 +460,7 @@ function App() {
           <div className="info-panel">
             <strong>HOW TO PLAY</strong>
             <p><b>Quick Play:</b> automatically pair up with another player, wait for a short pre-round countdown, and play first to 5 round wins with a halftime side swap. Buy equipment during each 22-second preparation phase with M. Credits are earned from results and eliminations; weapons reset each round.</p><p><b>Play with Bots:</b> you and four friendly bots face five enemies. Bots pathfind around walls, shoot, reload, push sites, plant/retake, and respawn in this casual mode. The score updates each round.</p><p><b>Drills:</b> focused spike practice; bots do not respawn until the next round.</p>
-            <p><b>Controls:</b> WASD move, Shift sprint, Space jump, mouse aim, left click shoot/place, B build mode, 1–4 build pieces, X/Z change build height, R reload, E plant or defuse, M buy menu, Esc menu.</p>
+            <p><b>Build Arena:</b> open free-for-all building, respawns, unlimited build materials, live K/D leaderboard, and Q/F/V abilities earned through kills and reused after cooldowns.</p><p><b>Controls:</b> WASD move, Shift sprint, Space jump, mouse aim, left click shoot/place, B build mode, 1–4 build pieces, X/Z change build height, R reload, E plant or defuse, M buy menu, Esc menu.</p>
           </div>
         )}
 
