@@ -54,6 +54,9 @@ export class ArenaEngine {
     this.container.appendChild(this.renderer.domElement);
 
     const saved = this.readSettings();
+    this.baseFov = saved.fov;
+    this.ads = false; this.crouching = false; this.shotBloom = 0; this.lastCombatMove = 0;
+    this.deathView = null; this.deathAt = 0; this.deadCamera = null; this.eyeHeight = PLAYER_HEIGHT;
     this.camera.fov = saved.fov;
     this.camera.updateProjectionMatrix();
     this.sensitivity = saved.sensitivity;
@@ -508,7 +511,7 @@ export class ArenaEngine {
       if (this.playerRespawnTimer <= 0 && this.gameMode === 'bots') {
         const home = SPAWNS[this.role];
         this.camera.position.set(home.x, PLAYER_HEIGHT, home.z);
-        this.health = 100;
+        this.health = 100; this.endDeathView();
         this.equipWeapon('sidearm');
         this.velocityY = 0;
         this.yaw = home.yaw;
@@ -781,10 +784,11 @@ export class ArenaEngine {
       this.health=Math.max(0,this.health-(actual-absorbed));
       this.damageFlash = 0.32;
       if (this.health === 0) {
+        this.startDeathView();
         this.deaths += 1;
         this.recordElimination(attackerName, 'YOU', attackerTeam);
         if (this.gameMode === 'bots') {
-          this.playerRespawnTimer = 3.2;
+          this.playerRespawnTimer = 3;
           this.setMessage('ELIMINATED · RESPAWNING IN 3 SEC', 3.2);
         } else {
           this.finishRound(this.role === 'ATTACKERS' ? 'DEFENDERS WIN' : 'ATTACKERS WIN', 'OPERATIVE ELIMINATED');
@@ -799,7 +803,9 @@ export class ArenaEngine {
     b.health = Math.max(0, b.health - effective);
     if (b.health === 0) {
       b.alive = false;
-      target.visible = false;
+      b.deathAt=performance.now();
+      playAgentAction(target,'death');
+      target.visible = true;
       b.respawn = this.gameMode === 'bots' ? 4.6 + Math.random() * 1.5 : Infinity;
       this.recordElimination(attackerName, b.botName, attackerTeam);
       if (attackerName === 'YOU') {
@@ -815,7 +821,7 @@ export class ArenaEngine {
     const home = SPAWNS[b.team];
     const offsetX = ((b.index % 5) - 2) * 2;
     b.health = 100;
-    b.alive = true;
+    b.alive = true; b.deathAt=0;bot.rotation.z=0;
     b.respawn = 0;
     b.path = [];
     b.pathIndex = 0;
@@ -1251,8 +1257,10 @@ export class ArenaEngine {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
       this.keys[event.code] = true;
       if (event.repeat) return;
+      if (event.code === 'KeyG' && !this.buildMode) this.toggleAds();
+      if (event.code === 'ControlLeft' || event.code === 'ControlRight') { this.crouching = true; this.ads = false; }
       if (event.code === 'KeyB') {
-        this.buildMode = !this.buildMode;
+        this.buildMode = !this.buildMode; if(this.buildMode)this.ads=false;
         if(!this.buildMode && this.preview) this.preview.visible = false;
         this.setMessage(this.buildMode ? 'BUILD MODE' : 'COMBAT MODE');
         this.pushHud(true);
@@ -1270,9 +1278,9 @@ export class ArenaEngine {
       if (event.code === 'KeyF' && !this.buildMode) this.useAbility('f');
       if (event.code === 'KeyV' && !this.buildMode) this.useAbility('ultimate');
       if (event.code === 'KeyN' && this.network) this.network.emit('restartRound');
-      if (event.code === 'Space' && this.grounded && this.health > 0 && !this.roundResult) { this.velocityY = 7.2; this.grounded = false; }
+      if (event.code === 'Space' && !this.crouching && this.grounded && this.health > 0 && !this.roundResult) { this.velocityY = 7.2; this.grounded = false; }
     };
-    this.handleKeyUp = (event) => { this.keys[event.code] = false; };
+    this.handleKeyUp = (event) => { this.keys[event.code] = false; if(event.code==='ControlLeft'||event.code==='ControlRight')this.crouching=!!(this.keys.ControlLeft||this.keys.ControlRight); };
     this.handleMouseMove = (event) => {
       if (document.pointerLockElement !== this.renderer.domElement) return;
       this.yaw -= event.movementX * this.sensitivity;
@@ -1281,6 +1289,7 @@ export class ArenaEngine {
       this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
     };
     this.handleMouseDown = (event) => {
+      if(event.button===2){ if(!this.buildMode && document.pointerLockElement===this.renderer.domElement)this.toggleAds(); return; }
       if (event.button !== 0) return;
       if (document.pointerLockElement !== this.renderer.domElement) {
         this.renderer.domElement.requestPointerLock?.();
@@ -1329,9 +1338,9 @@ export class ArenaEngine {
     this.renderer.setSize(width, height, false);
   }
 
-  isBlocked(x, z, footY = this.camera.position.y - PLAYER_HEIGHT) {
+  isBlocked(x, z, footY = this.camera.position.y - this.eyeHeight) {
     const playerBottom = footY + 0.08;
-    const playerTop = footY + PLAYER_HEIGHT;
+    const playerTop = footY + (this.crouching?1.18:PLAYER_HEIGHT);
     for (const item of this.solids) {
       if (item.type === 'ramp') {
         const r = this.surfaces.find(s => s.mesh === item.mesh);
@@ -1387,7 +1396,8 @@ export class ArenaEngine {
     if (this.keys.KeyD) move.add(right);
     if (this.keys.KeyA) move.sub(right);
     if (move.lengthSq() > 0) move.normalize();
-    const naturalSpeed=this.keys.ShiftLeft||this.keys.ShiftRight?10.3:7.2;
+    const naturalSpeed=this.crouching?3.25:this.ads?4.6:(this.keys.ShiftLeft||this.keys.ShiftRight?10.3:7.2);
+    this.lastCombatMove = move.lengthSq()>0 ? naturalSpeed : 0;
     const passiveSpeed=this.agentId==='rift'?1.08:this.agentId==='ember'?1.06:1;
     const speed=naturalSpeed*passiveSpeed*(Date.now()<this.hasteUntil?1.25:1);
     const dx = move.x * speed * delta;
@@ -1397,7 +1407,7 @@ export class ArenaEngine {
     const nextZ = clamp(this.camera.position.z + dz, -84.4, 84.4);
     if (!this.isBlocked(this.camera.position.x, nextZ)) this.camera.position.z = nextZ;
 
-    const currentFoot = this.camera.position.y - PLAYER_HEIGHT;
+    const currentFoot = this.camera.position.y - this.eyeHeight;
     this.velocityY -= 20.5 * delta;
     let nextFoot = currentFoot + this.velocityY * delta;
     const floor = this.getSurfaceHeight(this.camera.position.x, this.camera.position.z, currentFoot);
@@ -1408,7 +1418,8 @@ export class ArenaEngine {
     } else {
       this.grounded = false;
     }
-    this.camera.position.y = nextFoot + PLAYER_HEIGHT;
+    this.eyeHeight += ((this.crouching ? 1.12 : PLAYER_HEIGHT)-this.eyeHeight)*Math.min(1,delta*15);
+    this.camera.position.y = nextFoot + this.eyeHeight;
     if (this.camera.position.y < -16.0) {
       const home = SPAWNS[this.role];
       this.camera.position.set(home.x, PLAYER_HEIGHT, home.z);
@@ -1566,7 +1577,7 @@ export class ArenaEngine {
       this.credits=clampCredits(this.credits+(winner===this.role?2800:1900));
     this.ultimatePoints=Math.min(AGENTS[this.agentId].ultimate.cost,this.ultimatePoints+1);
     }
-    if (!this.network) this.roundResetTimer = 4.2;
+    if (!this.network) this.roundResetTimer = 3;
     this.setMessage(message, 6);
     this.pushHud(true);
   }
@@ -1768,6 +1779,49 @@ export class ArenaEngine {
     };
   }
 
+  toggleAds() {
+    if(this.health<=0||this.buildMode)return;
+    this.ads=!this.ads;
+    this.pushHud(true);
+  }
+
+  combatSpread() {
+    const w=weaponById(this.weaponId);
+    const moving=this.lastCombatMove>0;
+    const multiplier=(moving?2.45:1)*(this.crouching?.60:1)*(this.ads?.35:1);
+    return w.spread*multiplier+this.shotBloom*w.spread*1.65;
+  }
+
+  startDeathView() {
+    if(this.deathView||this.isDisposed)return;
+    this.ads=false;this.mouseHeld=false;this.deathAt=performance.now();
+    this.deathView=new THREE.Group();
+    this.deathView.position.set(this.camera.position.x,this.camera.position.y-this.eyeHeight,this.camera.position.z);
+    this.deathView.rotation.y=this.yaw;
+    this.scene.add(this.deathView);
+    attachAgentModel(this.deathView,this.agentId,{isDisposed:()=>this.isDisposed||!this.deathView});
+    this.deadCamera=new THREE.PerspectiveCamera(this.baseFov,this.camera.aspect,.1,10000);
+    this.deadCamera.position.copy(this.deathView.position).add(new THREE.Vector3(2.6,2.4,3.4));
+    this.deadCamera.lookAt(this.deathView.position.clone().add(new THREE.Vector3(0,1.1,0)));
+    this.weaponGroup.visible=false;
+  }
+
+  updateDeathView(delta) {
+    if(!this.deathView)return;
+    const t=Math.min(1,(performance.now()-this.deathAt)/900);
+    this.deathView.rotation.z=-1.25*t;
+    this.deathView.position.y-=delta*(t<1?.08:0);
+    animateAgent(this.deathView,delta,0);
+    this.deadCamera?.lookAt(this.deathView.position.clone().add(new THREE.Vector3(0,.85,0)));
+  }
+
+  endDeathView() {
+    if(!this.deathView)return;
+    this.deathView.userData.modelSerial=(this.deathView.userData.modelSerial||0)+1;
+    this.scene.remove(this.deathView);
+    this.deathView=null;this.deadCamera=null;this.weaponGroup.visible=true;
+  }
+
   fire() {
     if(this.health<=0||(!this.network&&this.roundResult))return;
     if(this.network&&!['CARRIED','PLANTED','ARENA'].includes(this.onlinePhase)){
@@ -1784,6 +1838,8 @@ export class ArenaEngine {
     this.muzzle.material.opacity=.9;
     this.muzzle.scale.setScalar(1.2+Math.random()*.5);
     const origin=this.camera.position.clone();
+    const shotSpread=this.combatSpread();
+    this.shotBloom=Math.min(1,this.shotBloom+0.19);
     const forward=this.camera.getWorldDirection(new THREE.Vector3()).normalize();
     const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)).normalize();
     const up=new THREE.Vector3().crossVectors(right,forward).normalize();
@@ -1793,8 +1849,8 @@ export class ArenaEngine {
     const damageByTarget=new Map();
     let bestEnd=null;
     for(let n=0;n<w.pellets;n++){
-      const driftX=(Math.random()-.5)*2*w.spread;
-      const driftY=(Math.random()-.5)*2*w.spread;
+      const driftX=(Math.random()-.5)*2*shotSpread;
+      const driftY=(Math.random()-.5)*2*shotSpread;
       const aim=forward.clone().addScaledVector(right,driftX).addScaledVector(up,driftY).normalize();
       this.raycaster.set(origin,aim);
       this.raycaster.far=w.range;
@@ -1825,7 +1881,7 @@ export class ArenaEngine {
       if(n<4)this.spawnTracer(start,end);
     }
     for(const [target,damage] of damageByTarget)this.applyBotDamage(target,Math.round(damage),{userData:{team:this.role,botName:'YOU'}});
-    if(this.network)this.network.emit('shoot',{direction:forward.toArray()},response=>{
+    if(this.network)this.network.emit('shoot',{direction:forward.toArray(),ads:this.ads,crouch:this.crouching},response=>{
       if(this.isDisposed)return;
       if(response?.hit?.damage>0)this.setMessage(`CONFIRMED HIT · ${response.hit.damage} DAMAGE`,0.9);
       else if(response?.error==='ROUND NOT LIVE')this.setMessage('WAIT FOR ROUND START · DAMAGE DISABLED DURING BUY',1.7);
@@ -1901,7 +1957,12 @@ export class ArenaEngine {
     }
     if (this.weaponCooldown > 0) this.weaponCooldown = Math.max(0, this.weaponCooldown - delta);
     if (this.muzzle.material.opacity > 0) this.muzzle.material.opacity = Math.max(0, this.muzzle.material.opacity - delta * 12);
-    this.weaponGroup.position.z += (-0.66 - this.weaponGroup.position.z) * Math.min(1, delta * 18);
+    this.shotBloom = Math.max(0, this.shotBloom-delta*0.74);
+    this.camera.fov += ((this.ads ? (this.weaponId==='marksman'?24:this.weaponId==='rifle'?43:55) : this.baseFov)-this.camera.fov)*Math.min(1,delta*14);
+    this.camera.updateProjectionMatrix();
+    this.weaponGroup.position.x += ((this.ads?0:.38)-this.weaponGroup.position.x)*Math.min(1,delta*15);
+    this.weaponGroup.position.y += ((this.ads?-.19:-.32)-this.weaponGroup.position.y)*Math.min(1,delta*15);
+    this.weaponGroup.position.z += ((this.ads?-.51:-.66)-this.weaponGroup.position.z) * Math.min(1, delta * 18);
     this.updateReload(delta);
   }
 
@@ -1922,6 +1983,7 @@ export class ArenaEngine {
     })).filter(a=>a.team===this.role || revealed(a.x,a.z));
     this.onHud?.({
       health: Math.round(this.health),
+      ads:this.ads,crouching:this.crouching,crosshairGap:Math.round(5+this.combatSpread()*500),deathView:!!this.deathView,
       kitCharges:{...this.charges},ultimatePoints:this.ultimatePoints,armor:this.armor,arenaCooldowns:{...this.arenaCooldowns},arenaLeaderboard:this.arenaLeaderboard,isBuildArena:this.isBuildArena,
       flashRemaining:Math.max(0,(this.flashUntil-Date.now())/1000),
       ammo: this.ammo,
@@ -1966,6 +2028,7 @@ export class ArenaEngine {
     if (this.isDisposed) return;
     this.frameId = requestAnimationFrame(this.animate);
     const delta = Math.min(this.clock.getDelta(), 0.04);
+    this.updateDeathView(delta);
     this.updateMovement(delta);
     if (!this.network) this.updateBots(delta);
     this.updateNetwork(delta);
@@ -1973,12 +2036,18 @@ export class ArenaEngine {
     this.updateBuildPreview();
     if (this.mouseHeld && !this.buildMode && weaponById(this.weaponId).automatic && document.pointerLockElement === this.renderer.domElement) this.fire();
     this.updateEffects(delta);
-    for(const bot of this.targets)if(bot.userData.alive)animateAgent(bot,delta);
+    for(const bot of this.targets){
+      if(bot.userData.alive)animateAgent(bot,delta);
+      else if(bot.userData.deathAt){
+        const t=(performance.now()-bot.userData.deathAt)/1000;
+        bot.visible=t<3;bot.rotation.z=-Math.min(1,t/.85)*1.25;
+      }
+    }
     for(const avatar of this.remotePlayers.values())if(avatar.visible)animateAgent(avatar,delta,avatar.userData.networkVelocity || 0);
     this.damageFlash = Math.max(0, this.damageFlash - delta);
     if (this.messageTimer > 0) this.messageTimer -= delta;
     this.pushHud();
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.deathView ? this.deadCamera : this.camera);
   };
 
   makeRemoteAvatar(id, role, agent='rift') {
@@ -2035,9 +2104,11 @@ export class ArenaEngine {
         if(self.charges)this.charges={...self.charges};
         if(self.arenaCooldowns)this.arenaCooldowns={...self.arenaCooldowns};
         if(this.isBuildArena)this.arenaRespawnAt=self.respawnAt||0;
+    if(self.health<=0 && !this.deathView)this.startDeathView();
+    if(self.health>0 && this.deathView)this.endDeathView();
         if(this.isBuildArena && Number.isInteger(self.respawnSerial)&&self.respawnSerial!==this.arenaRespawnSerial){
           this.arenaRespawnSerial=self.respawnSerial;
-          this.camera.position.set(self.x,self.y+PLAYER_HEIGHT,self.z);this.yaw=self.yaw;
+          this.endDeathView();this.camera.position.set(self.x,self.y+PLAYER_HEIGHT,self.z);this.yaw=self.yaw;
           this.camera.rotation.set(0,this.yaw,0,'YXZ');this.velocityY=0;this.mouseHeld=false;this.damageFlash=0;
           if(self.respawnSerial>0)this.setMessage('RESPAWNED · SPAWN SHIELD ACTIVE',2);
         }
@@ -2048,7 +2119,7 @@ export class ArenaEngine {
         this.agentLocked=!!self.agentLocked;
         if (Number.isInteger(state.roundSerial) && state.roundSerial !== this.onlineRoundSerial) {
           this.onlineRoundSerial = state.roundSerial;
-          this.camera.position.set(self.x, self.y + PLAYER_HEIGHT, self.z);
+          this.endDeathView();this.camera.position.set(self.x, self.y + PLAYER_HEIGHT, self.z);
           this.yaw = self.yaw;
           this.pitch = 0;
           this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
@@ -2076,7 +2147,10 @@ export class ArenaEngine {
         }
         if (!avatar) { avatar=this.makeRemoteAvatar(peer.id,peer.role,peer.agent||'rift');this.remotePlayers.set(peer.id,avatar); }
         if(peer.agent && avatar.userData.agent!==peer.agent)attachAgentModel(avatar,peer.agent,{isDisposed:()=>this.isDisposed});
-        avatar.visible = peer.health > 0;
+        avatar.visible = peer.health > 0 || (avatar.userData.deathAt && Date.now()-avatar.userData.deathAt<3000);
+        if(peer.health<=0 && !avatar.userData.deathAt) {avatar.userData.deathAt=Date.now(); playAgentAction(avatar,'death');}
+        if(peer.health>0)avatar.userData.deathAt=0;
+        if(avatar.userData.deathAt)avatar.rotation.z=-Math.min(1,(Date.now()-avatar.userData.deathAt)/850)*1.25; else avatar.rotation.z=0;
         const now=performance.now();
         const elapsed=Math.max(.05,(now-(avatar.userData.lastNetworkAt||now-120))/1000);
         avatar.userData.networkVelocity=Math.min(12,Math.hypot(peer.x-avatar.position.x,peer.z-avatar.position.z)/elapsed);
@@ -2121,6 +2195,7 @@ export class ArenaEngine {
     };
     this.onHit = ({damage,shooter}) => {
       this.damageFlash=0.35;
+      if(this.health-damage<=0)this.startDeathView();
       this.setMessage(`HIT BY ${shooter.slice(0,4)} · -${damage} HP`);
     };
     this.onAbilityEffect = data => {
@@ -2150,11 +2225,13 @@ export class ArenaEngine {
     const now=performance.now();
     if(now-this.netSendAt<50)return;
     this.netSendAt=now;
-    const foot=this.camera.position.y-PLAYER_HEIGHT;
-    this.network.emit('playerState',{x:this.camera.position.x,y:foot,z:this.camera.position.z,yaw:this.yaw,pitch:this.pitch,interact:!!this.keys.KeyE});
+    if(this.health<=0)return;
+    const foot=this.camera.position.y-this.eyeHeight;
+    this.network.emit('playerState',{x:this.camera.position.x,y:foot,z:this.camera.position.z,yaw:this.yaw,pitch:this.pitch,interact:!!this.keys.KeyE,ads:this.ads,crouching:this.crouching,moving:this.lastCombatMove>0});
   }
 
   dispose() {
+    this.endDeathView();
     this.isDisposed = true;
     cancelAnimationFrame(this.frameId);
     this.resizeObserver?.disconnect();
