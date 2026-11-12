@@ -8,6 +8,7 @@ import { attachAgentModel, animateAgent, playAgentAction } from './agent-models.
 import { TILE_SIZE, MAP_AREAS, MAP_LABELS, SITES, SPAWNS, COVER, BALCONIES, ACCESS_RAMPS, terrainHeight, playableAt, createWalkableTiles, tileKey, toTile, areaAt, selectActiveMap, ACTIVE_MAP_NAME, ACTIVE_MAP_ID } from './map-layout.js';
 import { findNavPath, segmentIsClear } from './bot-navigation.js';
 import { WEAPONS, weaponById, STARTING_CREDITS, clampCredits, canAfford } from './weapons.js';
+import { WeaponViewModel } from './weapon-viewmodels.js';
 
 const GRID = 2;
 const PLAYER_HEIGHT = 1.72;
@@ -72,6 +73,8 @@ export class ArenaEngine {
     this.pitch = 0;
     this.health = 100;
     this.weaponId = 'sidearm';
+    try { this.rifleStyle = localStorage.getItem('arenaForgeRifleAppearance') === 'wood' ? 'wood' : 'standard'; }
+    catch { this.rifleStyle = 'standard'; }
     this.ammo = WEAPONS.sidearm.magazine;
     this.reserve = WEAPONS.sidearm.reserve;
     this.credits = STARTING_CREDITS;
@@ -1030,6 +1033,7 @@ export class ArenaEngine {
 
   makeWeaponModel() {
     this.weaponGroup=new THREE.Group();
+    this.weaponFallback=new THREE.Group();
     this.weaponCore=new THREE.Mesh(new THREE.BoxGeometry(.18,.16,.65),this.material('#303941',.32,.60));
     this.weaponCore.position.set(0,0,0);
     this.weaponBarrel=new THREE.Mesh(new THREE.CylinderGeometry(.035,.04,.58,10),this.material('#737a80',.3,.75));
@@ -1040,10 +1044,16 @@ export class ArenaEngine {
     sight.position.set(0,.13,-.17);
     this.muzzle=new THREE.Mesh(new THREE.SphereGeometry(.10,10,8),new THREE.MeshBasicMaterial({color:'#ffcc8a',transparent:true,opacity:0}));
     this.muzzle.position.set(0,.015,-.82);
-    this.weaponGroup.add(this.weaponCore,this.weaponBarrel,grip,sight,this.muzzle);
+    this.weaponFallback.add(this.weaponCore,this.weaponBarrel,grip,sight);
+    this.weaponGroup.add(this.weaponFallback,this.muzzle);
     this.weaponGroup.position.set(.38,-.32,-.66);
     this.camera.add(this.weaponGroup);
     this.scene.add(this.camera);
+    // Models load on demand. Keep a light fallback gun visible for the sidearm
+    // and while Netlify assets are still downloading.
+    this.weaponViewModel = new WeaponViewModel(this.weaponGroup, (visible) => {
+      if (!this.isDisposed) this.weaponFallback.visible = !visible;
+    });
     this.updateWeaponModel();
   }
 
@@ -1056,6 +1066,7 @@ export class ArenaEngine {
     this.muzzle.position.z=-.53-.29*scale;
     const color=id==='shotgun'?'#775e50':id==='marksman'?'#707984':id==='smg'?'#485d67':'#303941';
     this.weaponCore.material.color.set(color);
+    this.weaponViewModel?.equip(id, this.rifleStyle);
   }
 
   equipWeapon(id,ammo,reserve) {
@@ -1273,6 +1284,12 @@ export class ArenaEngine {
       if (event.code === 'KeyX' && this.buildMode) { this.buildLevelOffset = this.buildLevelOffset + 2; this.setMessage(`BUILD LAYER +${this.buildLevelOffset}m`); }
       if (event.code === 'KeyZ' && this.buildMode) { this.buildLevelOffset = Math.max(-24, this.buildLevelOffset - 2); this.setMessage(`BUILD LAYER ${this.buildLevelOffset >= 0 ? '+' : ''}${this.buildLevelOffset}m`); }
       if (event.code === 'KeyR' && !this.buildMode) this.reload();
+      if (event.code === 'KeyT' && !this.buildMode && this.weaponId === 'rifle') {
+        this.rifleStyle = this.rifleStyle === 'wood' ? 'standard' : 'wood';
+        try { localStorage.setItem('arenaForgeRifleAppearance', this.rifleStyle); } catch {}
+        this.updateWeaponModel();
+        this.setMessage(this.rifleStyle === 'wood' ? 'WOOD-STOCK RIFLE APPEARANCE' : 'STANDARD RIFLE APPEARANCE', 1.8);
+      }
       if (event.code === 'KeyC' && !this.buildMode) this.useAbility('signature');
       if (event.code === 'KeyQ' && !this.buildMode) this.useAbility('q');
       if (event.code === 'KeyF' && !this.buildMode) this.useAbility('f');
@@ -1837,6 +1854,7 @@ export class ArenaEngine {
     this.weaponGroup.position.z=-.56;
     this.muzzle.material.opacity=.9;
     this.muzzle.scale.setScalar(1.2+Math.random()*.5);
+    this.weaponViewModel?.fire();
     const origin=this.camera.position.clone();
     const shotSpread=this.combatSpread();
     this.shotBloom=Math.min(1,this.shotBloom+0.19);
@@ -1921,6 +1939,7 @@ export class ArenaEngine {
     const w=weaponById(this.weaponId);
     if(this.reloading||this.ammo===w.magazine||this.reserve<=0)return;
     this.reloading=true;this.reloadTimer=w.reload;
+    this.weaponViewModel?.reload(w.reload);
     this.setMessage('RELOADING');
     if(this.network){
       this.network.emit('reload',{},result=>{
@@ -1943,6 +1962,7 @@ export class ArenaEngine {
   }
 
   updateEffects(delta) {
+    this.weaponViewModel?.update(delta);
     for (let i = this.effects.length - 1; i >= 0; i -= 1) {
       const effect = this.effects[i];
       effect.life -= delta;
@@ -2231,6 +2251,7 @@ export class ArenaEngine {
   }
 
   dispose() {
+    this.weaponViewModel?.dispose();
     this.endDeathView();
     this.isDisposed = true;
     cancelAnimationFrame(this.frameId);
