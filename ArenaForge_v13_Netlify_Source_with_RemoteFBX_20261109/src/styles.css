@@ -512,3 +512,17 @@ h1 em { color: #d89970; font-style: normal; }
 .arena-top-score{padding:8px 16px;background:#102529ed;color:#9ef2e1;border:1px solid #5a9e90;border-radius:9px;font-weight:800;letter-spacing:.07em}
 .arena-leaderboard{position:absolute;top:112px;right:16px;min-width:210px;z-index:5;background:#10202ce8;color:#e3f6ef;padding:12px 15px;border-radius:8px;font-size:12px;pointer-events:none}
 .arena-leaderboard>strong{display:block;margin-bottom:9px;color:#7ce5c3}.arena-leaderboard>div{display:grid;grid-template-columns:1fr 28px 28px;gap:5px;padding:4px 0;border-bottom:1px solid #ffffff1a}.arena-leaderboard span{text-align:right}.arena-leaderboard small{display:block;margin-top:10px;opacity:.85}
+
+/* v15 weapon accuracy: crosshair dynamically widens with real shot dispersion. */
+.crosshair { width:0;height:0;z-index:13; }
+.crosshair i { background:#fff7db;box-shadow:0 0 2px #111; }
+.crosshair i:nth-child(1){left:-1px;top:calc(-1 * var(--reticle-gap) - 8px);width:2px;height:7px}
+.crosshair i:nth-child(2){left:-1px;top:calc(var(--reticle-gap) + 1px);width:2px;height:7px}
+.crosshair i:nth-child(3){left:calc(-1 * var(--reticle-gap) - 8px);top:-1px;width:7px;height:2px}
+.crosshair i:nth-child(4){left:calc(var(--reticle-gap) + 1px);top:-1px;width:7px;height:2px}
+.crosshair.ads-active{opacity:.35}
+.ads-scope{position:absolute;inset:0;pointer-events:none;z-index:12;display:grid;place-items:center}
+.ads-scope::before{content:'';position:absolute;width:min(68vh,68vw);height:min(68vh,68vw);border:1px solid #222c;box-shadow:0 0 0 200vmax #05080c99;border-radius:50%;opacity:.16}
+.ads-scope.magnified::before{opacity:.86;box-shadow:0 0 0 200vmax #05080cee}
+.scope-dot{font-size:22px;color:#e9f8f0;text-shadow:0 0 2px black}
+.ads-toggle{position:absolute;right:22px;bottom:151px;z-index:20;border:1px solid #88bcb6;color:white;background:#101e24c9;border-radius:5px;padding:8px 11px;font:600 11px sans-serif;cursor:pointer}

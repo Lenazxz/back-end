@@ -310,7 +310,9 @@ function App() {
           </div>)}
         </div>
         <div className={`mode-pill ${hud.mode === 'BUILD' ? 'is-building' : ''}`}><span>{hud.mode} MODE</span><b>{hud.mode === 'BUILD' ? `${hud.buildPiece} · ${hud.buildLayer || 0}m` : `${hud.targets} HOSTILES`}</b></div>
-        <div className="crosshair" aria-hidden="true"><i /><i /><i /><i /></div>
+        <div className={`crosshair ${hud.ads?'ads-active':''}`} style={{'--reticle-gap':`${hud.crosshairGap||7}px`}} aria-hidden="true"><i /><i /><i /><i /></div>
+        {hud.ads&&<div className={`ads-scope ${hud.weaponId==='marksman'?'magnified':''}`} aria-hidden="true"><span className="scope-dot">+</span></div>}
+        <button className="ads-toggle" onClick={()=>gameControllerRef.current?.toggleAds()}>{hud.ads?'SCOPE ON':'SCOPE OFF'} · RMB / G</button>
         <div className="left-hud">
           <div className="player-card"><div className="player-mark">AF</div><div><strong>FIELD OPERATIVE</strong><small>{isOnline ? `ROOM ${activeRoom}` : gameMode === 'bots' ? 'PLAY WITH BOTS' : 'TRAINING DRILL'}</small></div></div>
           <div className="health-line"><span>HEALTH</span><strong>{hud.health}</strong></div>
@@ -336,7 +338,7 @@ function App() {
           <div className="credits-row"><span>CREDITS</span><strong>₡ {hud.credits ?? STARTING_CREDITS}</strong></div>
           <button className="shop-hud-button" onClick={()=>{ document.exitPointerLock?.();setShowShop(true); }} disabled={!hud.canBuy}>M · BUY LOADOUT</button>
         </div>
-        <div className="bottom-hint"><span className="keycap">W A S D</span> MOVE <span className="hint-gap"/><span className="keycap">SPACE</span> JUMP <span className="hint-gap"/><span className="keycap">B</span> BUILD <span className="hint-gap"/><span className="keycap">X / Z</span> BUILD HEIGHT <span className="hint-gap"/>{gameMode!=='arenaOnline'&&<><span className="keycap">E</span> OBJECTIVE <span className="hint-gap"/></>} <span className="hint-gap"/><span className="keycap">Q / F</span> UTILITIES <span className="hint-gap"/><span className="keycap">C</span> SIGNATURE <span className="hint-gap"/><span className="keycap">V</span> ULTIMATE <span className="hint-gap"/><span className="keycap">M</span> SHOP <span className="hint-gap"/><span className="keycap">R</span> RELOAD <span className="hint-gap"/><span className="keycap">ESC</span> MENU</div>
+        <div className="bottom-hint"><span className="keycap">W A S D</span> MOVE <span className="hint-gap"/><span className="keycap">SPACE</span> JUMP <span className="hint-gap"/><span className="keycap">CTRL</span> CROUCH <span className="hint-gap"/><span className="keycap">RMB / G</span> ADS <span className="hint-gap"/><span className="keycap">B</span> BUILD <span className="hint-gap"/><span className="keycap">X / Z</span> BUILD HEIGHT <span className="hint-gap"/>{gameMode!=='arenaOnline'&&<><span className="keycap">E</span> OBJECTIVE <span className="hint-gap"/></>} <span className="hint-gap"/><span className="keycap">Q / F</span> UTILITIES <span className="hint-gap"/><span className="keycap">C</span> SIGNATURE <span className="hint-gap"/><span className="keycap">V</span> ULTIMATE <span className="hint-gap"/><span className="keycap">M</span> SHOP <span className="hint-gap"/><span className="keycap">R</span> RELOAD <span className="hint-gap"/><span className="keycap">ESC</span> MENU</div>
         {isOnline && !hasPlayedOnline && (['WAITING','AGENT_SELECT'].includes(hud.phase) || (hud.phase==='PRE_ROUND'&&!agentLocked&&!hud.agentLocked)) &&
           <AgentSelector selected={selectedAgent} onChoose={setSelectedAgent}
             onConfirm={lockOnlineAgent} locked={agentLocked||!!hud.agentLocked}
