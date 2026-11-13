@@ -7,7 +7,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+console.info('[Arena Forge] weapon loader v16.1: GRIT pistol, calibrated sights and muzzle positions active');
+
 const GUN_FILES = Object.freeze({
+  sidearm: 'grit-sidearm.glb',
   smg: 'classic-smg.glb',
   shotgun: 'pump-shotgun.glb',
   rifle: 'standard-rifle.glb',
@@ -15,7 +18,18 @@ const GUN_FILES = Object.freeze({
   woodRifle: 'wood-stock-rifle.glb',
 });
 
-const GUN_LENGTHS = Object.freeze({ smg: 0.78, shotgun: 1.06, rifle: 0.98, marksman: 1.08, woodRifle: 1.01 });
+// Camera-space scale and sight-line calibration for the six supplied meshes.
+// All supplied meshes point their barrels toward -Z. 'sightHeight' aligns the
+// upper receiver/front sight near the crosshair when the camera enters ADS.
+// The shorter pistol uses its own fit instead of inheriting rifle dimensions.
+const GUN_FIT = Object.freeze({
+  sidearm:   { length: 0.51, sightHeight: 0.187, depth: -0.045 },
+  smg:      { length: 0.77, sightHeight: 0.182, depth: -0.030 },
+  shotgun:  { length: 1.02, sightHeight: 0.186, depth: -0.055 },
+  rifle:    { length: 0.98, sightHeight: 0.184, depth: -0.040 },
+  marksman: { length: 1.06, sightHeight: 0.188, depth: -0.060 },
+  woodRifle:{ length: 0.99, sightHeight: 0.184, depth: -0.040 },
+});
 const assetCache = new Map();
 const loader = new GLTFLoader();
 
@@ -91,6 +105,7 @@ export class WeaponViewModel {
     this.sequence = null;
     this.sequenceTime = 0;
     this.closePlayed = false;
+    this.finishPlayed = false;
   }
 
   clear() {
@@ -122,20 +137,27 @@ export class WeaponViewModel {
         disposeIndependent(model);
         throw new Error('Weapon model has no valid geometry');
       }
-      // All supplied models have their barrel along -Z. Fit the overall length
-      // to the camera's first-person coordinate system while keeping the sight
-      // line near the center when ADS is active.
+      // All supplied models have their barrel along -Z. Fit each weapon to a
+      // calibrated length and place the *top* of the gun near the ADS sight line.
+      const fit = GUN_FIT[kind];
       const length = Math.max(0.001, box.max.z - box.min.z);
-      const factor = GUN_LENGTHS[kind] / length;
+      const factor = fit.length / length;
       model.scale.setScalar(factor);
       model.position.x = -(box.min.x + box.max.x) * 0.5 * factor;
-      model.position.y = 0.085 - (box.min.y + box.max.y) * 0.5 * factor;
-      model.position.z = -(box.min.z + box.max.z) * 0.5 * factor;
+      model.position.y = fit.sightHeight - box.max.y * factor;
+      model.position.z = -(box.min.z + box.max.z) * 0.5 * factor + fit.depth;
+      // Pass the correct barrel-end location back to the engine for muzzle VFX.
+      // This is relative to weaponGroup, the common parent of root and muzzle.
+      const muzzleAt = new THREE.Vector3(
+        model.position.x + (box.min.x + box.max.x) * 0.5 * factor,
+        model.position.y + (box.min.y + box.max.y) * 0.5 * factor,
+        model.position.z + box.min.z * factor - 0.025,
+      );
       this.root.add(model);
       this.object = model;
       this.mixer = new THREE.AnimationMixer(model);
       for (const clip of gltf.animations || []) this.clips.set(clip.name, clip);
-      this.onVisible?.(true, id, model);
+      this.onVisible?.(true, id, model, muzzleAt);
     } catch (error) {
       if (this.destroyed || seq !== this.serial) return;
       console.warn(`[Arena Forge] 3D weapon ${kind} could not load; using fallback.`, error);
@@ -157,16 +179,21 @@ export class WeaponViewModel {
   }
 
   fire() {
-    // Charging a rifle on every automatic bullet would be visually wrong;
-    // only the pump shotgun cycles a moving part after individual shots.
-    if (this.kind !== 'shotgun' || !this.object || this.sequence?.type === 'reload') return;
-    const opening = this.clips.has('charge-open') ? 'charge-open' : this.clips.has('open') ? 'open' : null;
-    const closing = this.clips.has('charge-close') ? 'charge-close' : this.clips.has('close') ? 'close' : null;
-    if (!opening || !closing) return;
-    this.sequence = { type: 'fire', opening, closing, length: 0.24 };
+    // The shotgun cycles its pump. The GRIT sidearm cycles its actual slide.
+    // Rifles and SMGs intentionally do not rack their charging handles on each
+    // automatic shot; those are not real firing animations on the supplied GLBs.
+    if (!this.object || this.sequence?.type === 'reload') return;
+    const pistol = this.kind === 'sidearm';
+    if (!pistol && this.kind !== 'shotgun') return;
+    const opening = pistol ? 'slide-open' : (this.clips.has('charge-open') ? 'charge-open' : 'open');
+    const closing = pistol ? 'slide-close' : (this.clips.has('charge-close') ? 'charge-close' : 'close');
+    if (!this.clips.has(opening) || !this.clips.has(closing)) return;
+    const length = pistol ? 0.12 : 0.24;
+    this.sequence = { type: 'fire', opening, closing, length };
     this.sequenceTime = 0;
     this.closePlayed = false;
-    this.startClip(opening, 0.12);
+    this.finishPlayed = false;
+    this.startClip(opening, length * 0.47);
   }
 
   reload(seconds) {
@@ -174,9 +201,12 @@ export class WeaponViewModel {
     const opening = this.clips.has('magazine-open') ? 'magazine-open' : this.clips.has('open') ? 'open' : null;
     const closing = this.clips.has('magazine-close') ? 'magazine-close' : this.clips.has('close') ? 'close' : null;
     if (!opening || !closing) return;
-    this.sequence = { type: 'reload', opening, closing, length: seconds };
+    // The pistol has an extra hammer cock action after the magazine returns.
+    const finish = this.kind === 'sidearm' && this.clips.has('cock') ? 'cock' : null;
+    this.sequence = { type: 'reload', opening, closing, finish, length: seconds };
     this.sequenceTime = 0;
     this.closePlayed = false;
+    this.finishPlayed = false;
     this.startClip(opening, seconds * 0.42);
   }
 
@@ -186,7 +216,11 @@ export class WeaponViewModel {
     this.sequenceTime += delta;
     if (!this.closePlayed && this.sequenceTime >= s.length * 0.47) {
       this.closePlayed = true;
-      this.startClip(s.closing, s.length * 0.53);
+      this.startClip(s.closing, s.length * (s.finish ? 0.41 : 0.53));
+    }
+    if (s.finish && !this.finishPlayed && this.sequenceTime >= s.length * 0.88) {
+      this.finishPlayed = true;
+      this.startClip(s.finish, s.length * 0.12);
     }
     this.mixer.update(delta);
     if (this.sequenceTime >= s.length) this.sequence = null;
